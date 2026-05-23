@@ -1,0 +1,13 @@
+When it's time for a subscriber to receive a new delivery of our publication, BERG Cloud makes a request to `/edition/`. It might send some parameters in the URL, depending on what the contents of the publication's `meta.json` requires. You can read [more about meta.json in the Reference section](/reference/structure/meta_json).
+
+This publication's file results in `/edition/` being called with one standard parameter, `local_delivery_time`, and two custom ones that we defined, `lang` and `name`. So a request from BERG Cloud will be to a URL something like this:
+
+```
+/edition/?local_delivery_time=2013-11-18T23:20:30-08:00&lang=english&name=Alice
+```
+
+Here, `local_delivery_time` is set to `2013-11-18T23:20:30-08:00`. This tells us the date and time wherever the requesting Little Printer is located. We can see that it's currently 18th November 2013 for this Little Printer, in the -08:00 timezone. Remember that our publication only appears on Mondays, which it currently is for this Little Printer.
+
+There are also our custom fields, `lang` and `name`. The values for these are `english` and `Alice`, which were entered by the user when they subscribed. This data is stored on BERG Cloud and sent to a publication when it's time to deliver an edition.
+
+Now let's look at what our code does when this URL is requested. This is a little more involved than the code for `/sample/`, so we'll take it one step at a time.

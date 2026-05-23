@@ -1,0 +1,243 @@
+---
+title: Hello World (Python)
+---
+
+import ValidateConfigIntro from "@components/examples/hello-world/ValidateConfigIntro.mdx";
+import EtagExplanation from "@components/examples/hello-world/EtagExplanation.mdx";
+import EditionIntro from "@components/examples/hello-world/EditionIntro.mdx";
+import HtmlTemplate from "@components/examples/hello-world/HtmlTemplate.mdx";
+import NextSteps from "@components/examples/hello-world/NextSteps.mdx";
+
+## Code walkthrough
+
+We'll now walk through the different parts of the code, to see how we validate the user's input from the form we've just seen, display the sample, and print the editions.
+
+### Configuration
+
+All the code for our publication is in `publication.py` so let's look through this step-by-step ([here's the complete file on GitHub](https://web.archive.org/web/20140826070853/https://github.com/bergcloud/lp-hello-world-python/blob/master/publication.py)):
+
+```python
+# coding: utf-8
+from datetime import datetime
+import dateutil.parser
+from flask import Flask, abort, json, jsonify, make_response, render_template, Response, request, send_from_directory
+import hashlib
+
+# Default configuration
+DEBUG = False
+
+# Define greetings for different times of the day in different languages.
+GREETINGS = {
+    'english':      ('Good morning', 'Hello', 'Good evening'),
+    'french':       ('Bonjour', 'Bonjour', 'Bonsoir'),
+    'german':       ('Guten morgen', 'Hallo', 'Guten abend'),
+    'spanish':      ('Buenos días', 'Hola', 'Buenas noches'),
+    'portuguese':   ('Bom dia', 'Olá', 'Boa noite'),
+    'italian':      ('Buongiorno', 'Ciao', 'Buonasera'),
+    'swedish':      ('God morgon', 'Hallå', 'God kväll'),
+}
+
+app = Flask(__name__, static_url_path='')
+app.config.from_object(__name__)
+# If there's a HELLOWORLD_SETTINGS environment variable, which should be a
+# config filename, use those settings:
+app.config.from_envvar('HELLOWORLD_SETTINGS', silent=True)
+```
+
+First we import nececssary modules, and then we set up our [Flask](https://web.archive.org/web/20140826070853/http://flask.pocoo.org/) application. Between the two we declare two configuration properties, the most important being `GREETINGS`, which will be available as `app.config['GREETINGS']`, and contains data about all of the greetings we use for our publication.
+
+This variable contains different languages, and for each language greetings for morning, afternoon and evening. The keys to this array are the same as those defined in the `lang` form element in `/meta.json`.
+
+### Static files and '/'
+
+```python
+@app.route('/')
+def root():
+    return make_response('A Little Printer publication.')
+
+@app.route('/meta.json')
+@app.route('/icon.png')
+def static_from_root():
+    return send_from_directory(app.static_folder, request.path[1:])
+```
+
+We set up a few basic routes here.
+
+We don't need to have anything at the root level of our publication: BERG Cloud never tries to access it, and no one else should it. But it seems neater to at least display something.
+
+To serve the two static files required by BERG Cloud we need to set Flask up to serve them from our `/static/` directory.
+
+### /validate_config/
+
+<ValidateConfigIntro />
+
+```python
+@app.route('/validate_config/', methods=['POST'])
+def validate_config():
+    if 'config' not in request.form:
+        return Response(response='There is no config to validate', status=400)
+
+    # Preparing what will be returned:
+    response = {
+        'errors': [],
+        'valid': True,
+    }
+
+    # Extract the config from the POST data and parse its JSON contents.
+    # user_settings will be something like: {"name":"Alice", "lang":"english"}.
+    user_settings = json.loads(request.form.get('config', {}))
+```
+
+First, we ensure this POST request includes a `config` field. If not, we return a 400 status code.
+
+Then, we prepare the structure that we will return as JSON.
+
+Next we parse the variables received as JSON in the `config` field, ready for the actual validation.
+
+```python
+    # If the user did not choose a language:
+    if 'lang' not in user_settings or user_settings['lang'] == '':
+        response['valid'] = False
+        response['errors'].append('Please choose a language from the menu.')
+
+    # If the user did not fill in the name option:
+    if 'name' not in user_settings or user_settings['name'] == '':
+        response['valid'] = False
+        response['errors'].append('Please enter your name into the name box.')
+
+    if user_settings['lang'].lower() not in app.config['GREETINGS']:
+        # Given that the select field is populated from a list of languages
+        # we defined this should never happen. Just in case.
+        response['valid'] = False
+        response['errors'].append("We couldn't find the language you selected (%s). Please choose another." % user_settings['lang'])
+
+    return jsonify(**response)
+```
+
+Both of our fields, `name` and `lang` are required, so we make sure both are present and have values. If not, we set the validity of our response to false, and add an error message.
+
+Then we ensure that the value supplied for `lang` does match one of the greeting languages we defined earlier. This _should_ always be the case, but it's always best to be careful with input from sources external to our code.
+
+That done, we just need to return our response – whether successful or not – as JSON. And that's the validation done; users should be able to subscribe to our publication now.
+
+### /sample/
+
+Requests for `/sample/` always display the same content, so we need to set up which of our greetings we want to display each time.
+
+```python
+@app.route('/sample/')
+    # The values we'll use for the sample:
+    language = 'english'
+    name = 'Little Printer'
+    response = make_response(render_template(
+            'edition.html',
+            greeting="%s, %s" % (app.config['GREETINGS'][language][0], name),
+        ))
+    response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    # Set the ETag to match the content.
+    response.headers['ETag'] = '"%s"' % (
+        hashlib.md5(
+            language + name + datetime.utcnow().strftime('%d%m%Y')
+        ).hexdigest()
+    )
+    return response
+```
+
+<EtagExplanation />
+
+### /edition/
+
+<EditionIntro />
+
+```python
+@app.route('/edition/')
+def edition():
+    # Extract configuration provided by user through BERG Cloud.
+    # These options are defined in meta.json.
+    language = request.args.get('lang', '')
+    name = request.args.get('name', '')
+
+    if language == '' or language not in app.config['GREETINGS']:
+        return Response(
+            response='Error: Invalid or missing lang parameter', status=400)
+
+    if name == '':
+        return Response(response='Error: No name provided', status=400)
+
+    try:
+        # local_delivery_time is like '2013-11-18T23:20:30-08:00'.
+        date = dateutil.parser.parse(request.args['local_delivery_time'])
+    except:
+        return Response(
+                    response='Error: Invalid or missing local_delivery_time',
+                    status=400)
+```
+
+Here, we get the values for `lang` and `name` from the GET arguments, and return 400 status codes if either of those are missing. We also check the supplied value for language matches our array of greetings.
+
+Similarly, we attempt to parse the `local_delivery_time` and return a 400 status code if that fails to generate a usable date object. Remember, this is the date in the Little Printer's timezone, so we don't want to convert it to UTC or anything else.
+
+Next we check that it's the correct day of the week to print an edition:
+
+```python
+    # The publication is only delivered on Mondays, so if it's not a Monday in
+    # the subscriber's timezone, we return nothing but a 204 status.
+    if date.weekday() != 0:
+        return Response(response=None, status=204)
+```
+
+We check the date (in the Little Printer's timezone) to see if this is a Monday or not. If it's not, then we return a 204 status code; this indicates to BERG Cloud that there's nothing to display today.
+
+Now we know we have valid data, and it's the correct day to deliver content, we can do that:
+
+```python
+    # Pick a time of day appropriate greeting.
+    i = 1
+    if date.hour >= 0 and date.hour <= 3:
+        i = 2
+    if date.hour >= 4 and date.hour <= 11:
+        i = 0
+    elif date.hour >= 12 and date.hour <= 17:
+        i = 1
+    elif date.hour >= 18 and date.hour <= 23:
+        i = 2
+
+    # Base the ETag on the unique content: language, name and time/date.
+    # This means the user will not get the same content twice.
+    # But, if they reset their subscription (with, say, a different language)
+    # they will get new content.
+    response = make_response(render_template(
+                'edition.html',
+                greeting="%s, %s" % (app.config['GREETINGS'][language][i], name)
+            ))
+    response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    response.headers['ETag'] = '"%s"' % (
+            hashlib.md5(
+                language + name + date.strftime('%H%d%m%Y')
+            ).hexdigest()
+        )
+    return response
+```
+
+We're on the final stage of outputting the edition for this user. First, we determine which of the three greetings to use, based on the hour of the day: the morning, afternoon or evening version.
+
+We then output the response, in a similar way to we did for `/sample/`, above. The main difference here is with the ETag. In general, ETags should change whenever the content changes, so we use the `language` and `name` to generate it. However, we're also using today's date so that the ETag will change each day, just in case we make tweaks to the publication. We don't want BERG Cloud to cache the content forever, which is what would happen if we used only the our two configuration parameters.
+
+### The HTML template
+
+<HtmlTemplate />
+
+```html
+<body>
+
+	<h1>{{ greeting }}</h1>
+
+</body>
+</html>
+```
+
+Not much to it! We display the greeting variable that was prepared for our `/edition/` or `/sample/` and that's all.
+
+## Next steps
+
+<NextSteps />

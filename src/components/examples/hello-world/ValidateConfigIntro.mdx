@@ -1,0 +1,33 @@
+In our `meta.json` we specified two config variables, `name` and `lang` which the user supplies values for when they subscribe to the publication. When they submit the form, BERG Cloud Remote POSTs those values to `/validate_config/` to check they meet the publication's requirements.
+
+The data will arrive in a JSON-formatted string. If we get the value of the POST's `config` variable, it will contain something like this:
+
+```json
+{ "name": "Alice", "lang": "english" }
+```
+
+Our publication's response should be JSON, rather than an HTML page and should look like this if validation succeeds:
+
+```json
+{
+	"valid": true
+}
+```
+
+Or something like this if validation fails:
+
+```json
+{
+	"valid": false,
+	"errors": [
+		"Please enter your name into the name box.",
+		"Please select a language."
+	]
+}
+```
+
+![](/images/example_publication_subscribe_form_error.png)
+
+That would result in the user seeing something like the screen shown here, with the publication's error messages shown on BERG Cloud Remote.
+
+We'll look at how our Hello World publication does this validation. When `/validate_config` is POSTed to, we first do a bit of checking and preparation before the validation itself:

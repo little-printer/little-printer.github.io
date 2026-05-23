@@ -1,0 +1,262 @@
+---
+title: Hello World (PHP)
+---
+
+import ValidateConfigIntro from "@components/examples/hello-world/ValidateConfigIntro.mdx";
+import EtagExplanation from "@components/examples/hello-world/EtagExplanation.mdx";
+import EditionIntro from "@components/examples/hello-world/EditionIntro.mdx";
+import HtmlTemplate from "@components/examples/hello-world/HtmlTemplate.mdx";
+import NextSteps from "@components/examples/hello-world/NextSteps.mdx";
+
+## Code walkthrough
+
+We'll now walk through the different parts of the code, to see how we validate the user's input from the form we've just seen, display the sample, and print the editions.
+
+### Configuration
+
+The three main URLs, `/editions/index.php`, ` /sample/index.php` and `/validate_config/index.php` do nothing but call functions that are in `/functions.php``. This lets us keep shared code in one place.
+
+Let's look through `/functions.php` step-by-step ([here's the complete file on GitHub](https://web.archive.org/web/20140909193920/https://github.com/bergcloud/lp-hello-world-php/blob/master/functions.php)):
+
+```php
+<?php
+
+// Should be the common directory path from the URL, eg
+// '/lp-hello-world-php/'
+$ROOT_DIRECTORY = preg_replace(
+		'/(sample|edition|validate_config)\/(index.php)?(\?.*?)?$/', '', $_SERVER['REQUEST_URI']);
+
+// Define greetings for different times of the day in different languages.
+$GREETINGS = array(
+		'english'       => array('Good morning', 'Hello', 'Good evening'),
+		'french'        => array('Bonjour', 'Bonjour', 'Bonsoir'),
+		'german'        => array('Guten morgen', 'Hallo', 'Guten abend'),
+		'spanish'       => array('Buenos días', 'Hola', 'Buenas noches'),
+		'portuguese'    => array('Bom dia', 'Olá', 'Boa noite'),
+		'italian'       => array('Buongiorno', 'Ciao', 'Buonasera'),
+		'swedish'       => array('God morgon', 'Hallå', 'God kväll')
+);
+```
+
+To prepare we're creating two global variables.
+
+`$ROOT_DIRECTORY` is the path to our publication files.
+
+`$GREETINGS` contains an array of data about all of the greetings we use for our publication.
+
+This variable contains different languages, and for each language greetings for morning, afternoon and evening. The keys to this array are the same as those defined in the `lang` form element in `/meta.json`.
+
+#### Static files and '/'
+
+With PHP our static files – `/icon.png` and `/meta.json` – are served directly from the root directory of our publication (using a framework with other programming languages requires a bit more set-up).
+
+We've also included an `/index.php` file. This isn't required, because BERG Cloud doesn't try to access it, but it will keep things neater if anyone happens to view this URL.
+
+### /validate_config/
+
+<ValidateConfigIntro />
+
+```php
+function display_validate_config() {
+	global $GREETINGS;
+
+	if (array_key_exists('config', $_POST)) {
+		$config = $_POST['config'];
+	} else {
+		header('HTTP/1.0 400 Bad Request');
+		print 'There is no config to validate';
+		exit();
+	}
+
+	// Preparing what will be returned:
+	$response = array(
+		'errors' => array(),
+		'valid' => TRUE
+	);
+
+	// Extract the config from the POST data and parse its JSON contents.
+	// user_settings will be something like:
+	// {"name":"Alice", "lang":"english"}.
+	$user_settings = json_decode(stripslashes($config), TRUE);
+}
+```
+
+First, we ensure this POST request includes a `config` field. If not, we return a 400 status code.
+
+Then, we prepare the structure that we will return as JSON.
+
+Next we parse the variables received as JSON in the `config` field, ready for the actual validation.
+
+```php
+// If the user did not choose a language:
+if ( ! array_key_exists('lang', $user_settings) || $user_settings['lang'] == '') {
+	$response['valid'] = FALSE;
+	array_push($response['errors'], 'Please choose a language from the menu.');
+}
+
+// If the user did not fill in the name option:
+if ( ! array_key_exists('name', $user_settings) || $user_settings['name'] == '') {
+	$response['valid'] = FALSE;
+	array_push($response['errors'], 'Please enter your name into the name box.');
+}
+
+if ( ! array_key_exists(strtolower($user_settings['lang']), $GREETINGS)) {
+	// Given that the select field is populated from a list of languages
+	// we defined this should never happen. Just in case.
+	$response['valid'] = FALSE;
+	array_push($response['errors'], sprintf("We couldn't find the language you selected (%s). Please choose another.", $user_settings['lang']));
+}
+
+header('Content-type: application/json');
+echo json_encode($response);
+}
+```
+
+Both of our fields, `name` and `lang` are required, so we make sure both are present and have values. If not, we set the validity of our response to false, and add an error message.
+
+Then we ensure that the value supplied for `lang` does match one of the greeting languages we defined earlier. This _should_ always be the case, but it's always best to be careful with input from sources external to our code.
+
+That done, we just need to return our response – whether successful or not – as JSON. And that's the validation done; users should be able to subscribe to our publication now.
+
+### /sample/
+
+Requests for `/sample/` always display the same content, so we need to set up which of our greetings we want to display each time.
+
+The file `/sample/index.php` calls the following function in `/functions.php`:
+
+```php
+function display_sample() {
+	global $ROOT_DIRECTORY, $GREETINGS;
+
+	// The values we'll use for the sample:
+	$language = 'english';
+	$name = 'Little Printer';
+
+	$greeting = sprintf('%s, %s', $GREETINGS[$language][0], $name);
+
+	// Set the ETag to match the content.
+	header("Content-Type: text/html; charset=utf-8");
+	header('ETag: "' . md5($language . $name . gmdate('dmY')) . '"');
+	require $_SERVER['DOCUMENT_ROOT'] . $ROOT_DIRECTORY . 'template.php';
+}
+```
+
+<EtagExplanation />
+
+### /edition/
+
+<EditionIntro />
+
+```php
+function display_edition() {
+	global $ROOT_DIRECTORY, $GREETINGS;
+
+	// We ignore timezones, but have to set a timezone or PHP will complain.
+	date_default_timezone_set('UTC');
+
+	if (array_key_exists('lang', $_GET)) {
+		$language = $_GET['lang'];
+	} else {
+		$language = '';
+	}
+
+	if (array_key_exists('name', $_GET)) {
+		$name = $_GET['name'];
+	} else {
+		$name = '';
+  }
+
+	if ($language == '' || ! array_key_exists($language, $GREETINGS)) {
+		header('HTTP/1.0 400 Bad Request');
+		print 'Error: Invalid or missing lang parameter';
+		exit();
+	}
+	if ($name == '') {
+		header('HTTP/1.0 400 Bad Request');
+		print 'Error: No name provided';
+		exit();
+	}
+	try {
+		// local_delivery_time is like '2013-11-18T23:20:30-08:00'.
+		$date = new DateTime($_GET['local_delivery_time']);
+	} catch(Exception $e) {
+		header('HTTP/1.0 400 Bad Request');
+		print 'Error: Invalid or missing local_delivery_time';
+		exit();
+	}
+}
+```
+
+This is the start of the function that's called when the `/edition/` URL is requested. First, we set the default timezone; although it doesn't make much difference to this publication, PHP can complain if it's not set and we start using dates.
+
+Here, we get the values for `lang` and `name` from the GET arguments, and return 400 status codes if either of those are missing. We also check the supplied value for language matches our array of greetings.
+
+Similarly, we attempt to parse the `local_delivery_time` and return a 400 status code if that fails to generate a usable date object. Remember, this is the date in the Little Printer's timezone, so we don't want to convert it to UTC or anything else.
+
+Next we check that it's the correct day of the week to print an edition:
+
+```php
+// The publication is only delivered on Mondays, so if it's not a Monday in
+// the subscriber's timezone, we return nothing but a 204 status.
+if ($date->format('D') !== 'Mon') {
+	http_response_code(204);
+	exit();
+}
+```
+
+We check the date (in the Little Printer's timezone) to see if this is a Monday or not. If it's not, then we return a 204 status code; this indicates to BERG Cloud that there's nothing to display today.
+
+Now we know we have valid data, and it's the correct day to deliver content, we can do that:
+
+```php
+// Pick a time of day appropriate greeting.
+$i = 1;
+$hour = (int) $date->format('G');
+switch(TRUE) {
+	case in_array($hour, range(0, 3));
+		$i = 2;
+		break;
+	case in_array($hour, range(4, 11));
+		$i = 0;
+		break;
+	case in_array($hour, range(12, 17));
+		$i = 1;
+		break;
+	case in_array($hour, range(18, 23));
+		$i = 2;
+		break;
+}
+// Base the ETag on the unique content: language, name and time/date.
+// This means the user will not get the same content twice.
+// But, if they reset their subscription (with, say, a different language)
+// they will get new content.
+header("Content-Type: text/html; charset=utf-8");
+header('ETag: "' . md5($language . $name . $date->format('HdmY')) . '"');
+
+$greeting = sprintf('%s, %s', $GREETINGS[$language][$i], $name);
+
+require $_SERVER['DOCUMENT_ROOT'] . $ROOT_DIRECTORY . 'template.php';
+```
+
+We're on the final stage of outputting the edition for this user. First, we determine which of the three greetings to use, based on the hour of the day: the morning, afternoon or evening version.
+
+We then output the response, in a similar way to we did for `/sample/`, above. The main difference here is with the ETag. In general, ETags should change whenever the content changes, so we use the `language` and `name` to generate it. However, we're also using today's date so that the ETag will change each day, just in case we make tweaks to the publication. We don't want BERG Cloud to cache the content forever, which is what would happen if we used only the our two configuration parameters.
+
+### The HTML template
+
+<HtmlTemplate />
+
+```php
+<body>
+
+	<h1><?php echo $greeting; ?></h1>
+
+</body>
+</html>
+```
+
+Not much to it! We display the greeting variable that was prepared for our `/edition/` or `/sample/` and that's all.
+
+## Next steps
+
+<NextSteps />

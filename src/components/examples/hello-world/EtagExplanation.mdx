@@ -1,0 +1,13 @@
+Here, we set the parameters to use for the greeting we want to display in our sample (the language and name). We construct the text of the greeting using these and the first of the three greetings for that language.
+
+We set the `Content-Type` header, to be sure that our text displays as expected (in PHP and Python; Sinatra does this by default).
+
+We also set the `ETag` header. This is a string that indicates to BERG Cloud when content changes. It will look something like this (the quotes are part of the ETag's content):
+
+```
+"29c091418ead4585817a00930602519c"
+```
+
+Because requests to `/sample/` will always return the same content we don't need to change the ETag each time. However, we will make it change each day, hence the use of the date when generating it. Otherwise, if we changed our sample content in some way, BERG Cloud may never know, because it would always see the same ETag and never fetch the fresh content. If we change the ETag daily then the first request BERG Cloud makes for the sample each day will result in our content being fetched.
+
+ETags can be fiddly things to get right, so be sure to [read more about them in the Reference section](/reference/structure/edition/#etags). We'll also come across them again when we look at what happens when `/edition/` is called.

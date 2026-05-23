@@ -1,0 +1,220 @@
+---
+title: Hello World (Ruby)
+---
+
+import ValidateConfigIntro from "@components/examples/hello-world/ValidateConfigIntro.mdx";
+import EtagExplanation from "@components/examples/hello-world/EtagExplanation.mdx";
+import EditionIntro from "@components/examples/hello-world/EditionIntro.mdx";
+import HtmlTemplate from "@components/examples/hello-world/HtmlTemplate.mdx";
+import NextSteps from "@components/examples/hello-world/NextSteps.mdx";
+
+## Code walkthrough
+
+We'll now walk through the different parts of the code, to see how we validate the user's input from the form we've just seen, display the sample, and print the editions.
+
+### Configuration
+
+All the code for our publication is in `publication.rb` so let's look through this step-by-step ([here's the complete file on GitHub](https://web.archive.org/web/20140826070853/https://github.com/bergcloud/lp-publication-hello-world/blob/master/publication.rb)):
+
+```ruby
+# encoding: UTF-8
+require 'json'
+require 'sinatra'
+
+configure do
+  # Define greetings for different times of the day in different languages.
+  set :greetings, {
+    'english'     => ['Good morning', 'Hello', 'Good evening'],
+    'french'      => ['Bonjour', 'Bonjour', 'Bonsoir'],
+    'german'      => ['Guten morgen', 'Hallo', 'Guten abend'],
+    'spanish'     => ['Buenos días', 'Hola', 'Buenas noches'],
+    'portuguese'  => ['Bom dia', 'Olá', 'Boa noite'],
+    'italian'     => ['Buongiorno', 'Ciao', 'Buonasera'],
+    'swedish'     => ['God morgon', 'Hallå', 'God kväll']
+  }
+end
+```
+
+We create a setting that holds all of the data about the greetings we use for our publication.
+
+This variable contains different languages, and for each language greetings for morning, afternoon and evening. The keys to this array are the same as those defined in the `lang` form element in `/meta.json`.
+
+### Static files and '/'
+
+Static files – `/icon.png` and `/meta.json` – are served by Sinatra from the `/public/` directory.
+
+We don't need to have anything at the root level of our publication: BERG Cloud never tries to access it, and no one else should it. But it seems neater to at least display something, so we have this in `publication.rb`:
+
+```ruby
+get '/' do
+  return 'A Little Printer publication.'
+end
+```
+
+### /validate_config/
+
+<ValidateConfigIntro />
+
+```ruby
+post '/validate_config/' do
+  if params[:config].nil?
+    return 400, 'There is no config to validate.'
+  end
+
+  # Preparing what will be returned:
+  response = {
+    :errors => [],
+    :valid => true
+  }
+
+  # Extract the config from the POST data and parse its JSON contents.
+  # user_settings will be something like: {"name":"Alice", "lang":"english"}.
+  user_settings = JSON.parse(params[:config])
+```
+
+First, we ensure this POST request includes a `config` field. If not, we return a 400 status code.
+
+Then, we prepare the structure that we will return as JSON.
+
+Next we parse the variables received as JSON in the `config` field, ready for the actual validation.
+
+```ruby
+  # If the user did not choose a language:
+  if user_settings['lang'].nil? || user_settings['lang'] == ''
+    response[:valid] = false
+    response[:errors] <<; 'Please choose a language from the menu.'
+  end
+
+  # If the user did not fill in the name option:
+  if user_settings['name'].nil? || user_settings['name'] == ''
+    response[:valid] = false
+    response[:errors] <<; 'Please enter your name into the name box.'
+  end
+
+  unless settings.greetings.include?(user_settings['lang'].downcase)
+    # Given that the select field is populated from a list of languages
+    # we defined this should never happen. Just in case.
+    response[:valid] = false
+    response[:errors] <<; "We couldn't find the language you selected (#{user_settings['lang']}). Please choose another."
+  end
+
+  content_type :json
+  response.to_json
+end
+```
+
+Both of our fields, `name` and `lang` are required, so we make sure both are present and have values. If not, we set the validity of our response to false, and add an error message.
+
+Then we ensure that the value supplied for `lang` does match one of the greeting languages we defined earlier. This _should_ always be the case, but it's always best to be careful with input from sources external to our code.
+
+That done, we just need to return our response – whether successful or not – as JSON. And that's the validation done; users should be able to subscribe to our publication now.
+
+### /sample/
+
+Requests for `/sample/` always display the same content, so we need to set up which of our greetings we want to display each time.
+
+```ruby
+get '/sample/' do
+  # The values we'll use for the sample:
+  language = 'english';
+  name = 'Little Printer';
+  @greeting = "#{settings.greetings[language][0]}, #{name}"
+  # Set the ETag to match the content.
+  etag Digest::MD5.hexdigest(language + name + Time.now.utc.strftime('%d%m%Y'))
+  erb :edition
+end
+```
+
+<EtagExplanation />
+
+### /edition/
+
+<EditionIntro />
+
+```ruby
+get '/edition/' do
+  # Extract configuration provided by user through BERG Cloud.
+  # These options are defined in meta.json.
+  language = params.fetch(:lang, '')
+  name = params.fetch(:name, '')
+
+  if language == '' || ! settings.greetings.include?(language)
+    return 400, 'Error: Invalid or missing lang parameter'
+  end
+  if name == ''
+    return 400, 'Error: No name provided'
+  end
+
+  begin
+    # local_delivery_time is like '2013-11-18T23:20:30-08:00'.
+    date = DateTime.parse(params[:local_delivery_time])
+  rescue
+    return 400, 'Error: Invalid or missing local_delivery_time'
+  end
+```
+
+Here, we get the values for `lang` and `name` from the GET arguments, and return 400 status codes if either of those are missing. We also check the supplied value for language matches our array of greetings.
+
+Similarly, we attempt to parse the `local_delivery_time` and return a 400 status code if that fails to generate a usable date object. Remember, this is the date in the Little Printer's timezone, so we don't want to convert it to UTC or anything else.
+
+Next we check that it's the correct day of the week to print an edition:
+
+```ruby
+  # The publication is only delivered on Mondays, so if it's not a Monday in
+  # the subscriber's timezone, we return nothing but a 204 status.
+  if ! date.monday?
+    return 204
+  end
+```
+
+We check the date (in the Little Printer's timezone) to see if this is a Monday or not. If it's not, then we return a 204 status code; this indicates to BERG Cloud that there's nothing to display today.
+
+Now we know we have valid data, and it's the correct day to deliver content, we can do that:
+
+```ruby
+  # Pick a time of day appropriate greeting.
+  i = 1
+  case date.hour
+  when 4..11
+    i = 0
+  when 12..17
+    i = 1
+  when 18..24
+  when 0..3
+    i = 2
+  end
+
+  # Base the ETag on the unique content: language, name and time/date.
+  # This means the user will not get the same content twice.
+  # But, if they reset their subscription (with, say, a different language)
+  # they will get new content.
+  etag Digest::MD5.hexdigest(language + name + date.strftime('%H%d%m%Y'))
+
+  @greeting = "#{settings.greetings[language][i]}, #{name}"
+
+  erb :edition
+end
+```
+
+We're on the final stage of outputting the edition for this user. First, we determine which of the three greetings to use, based on the hour of the day: the morning, afternoon or evening version.
+
+We then output the response, in a similar way to we did for `/sample/`, above. The main difference here is with the ETag. In general, ETags should change whenever the content changes, so we use the `language` and `name` to generate it. However, we're also using today's date so that the ETag will change each day, just in case we make tweaks to the publication. We don't want BERG Cloud to cache the content forever, which is what would happen if we used only the our two configuration parameters.
+
+### The HTML template
+
+<HtmlTemplate />
+
+```html
+<body>
+
+  <h1><%= @greeting %></h1>
+
+</body>
+</html>
+```
+
+Not much to it! We display the greeting variable that was prepared for our `/edition/` or `/sample/` and that's all.
+
+## Next steps
+
+<NextSteps />
