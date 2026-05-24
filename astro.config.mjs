@@ -11,7 +11,8 @@ export default defineConfig({
 			favicon: "/favicon.png",
 			customCss: ["./src/styles/custom.css"],
 			editLink: {
-				baseUrl: "https://github.com/little-printer/website/edit/main/",
+				baseUrl:
+					"https://github.com/little-printer/little-printer.github.io/edit/main/",
 			},
 			social: [
 				{
